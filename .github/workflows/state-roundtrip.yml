@@ -1,0 +1,54 @@
+# Temporary (Hiyabye/Rhythm#218): times the collector's per-run state round-trip
+# with a 70 MB test object in the private R2 bucket, and one Workers AI call on a
+# synthetic fixture text. Remove when the gate is recorded.
+name: State round-trip
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: state-roundtrip
+  cancel-in-progress: false
+
+jobs:
+  roundtrip:
+    runs-on: ubuntu-24.04
+    environment: collector
+    timeout-minutes: 10
+    env:
+      EXPECTED_SHA256: 9d6f9ecd1e10b498cc2054c3d5a380e0107a500f381e990e60c1650221c033c6
+    steps:
+      - name: Runner location
+        run: curl -fsS https://www.cloudflare.com/cdn-cgi/trace | grep -E '^(colo|loc)='
+
+      - name: R2 download, upload, download
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          base="https://${CF_ACCOUNT_ID}.r2.cloudflarestorage.com/rhythm-state/g5-test"
+          r2() { curl -fsS --aws-sigv4 "aws:amz:auto:s3" --user "${R2_ACCESS_KEY_ID}:${R2_SECRET_ACCESS_KEY}" "$@"; }
+          r2 -o state.bin -w 'download: %{size_download} B in %{time_total} s (ttfb %{time_starttransfer} s)\n' "$base/state.bin"
+          echo "$EXPECTED_SHA256  state.bin" | sha256sum -c -
+          r2 -o /dev/null -T state.bin -H "x-amz-content-sha256: UNSIGNED-PAYLOAD" \
+            -w 'upload: %{size_upload} B in %{time_total} s\n' "$base/state-runner.bin"
+          r2 -o again.bin -w 'download after upload: %{size_download} B in %{time_total} s\n' "$base/state-runner.bin"
+          echo "$EXPECTED_SHA256  again.bin" | sha256sum -c -
+          r2 -o /dev/null -X DELETE -w 'delete: HTTP %{http_code}\n' "$base/state-runner.bin"
+
+      - name: Workers AI embedding
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_AI_TOKEN: ${{ secrets.CF_AI_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Title of the synthetic `academic` case in Hiyabye/Rhythm's evaluation.json.
+          body='{"text":["Instruct: Given a Korean search query, retrieve relevant Korean university notices\nQuery: 2026학년도 1학기 휴학 신청 안내"]}'
+          curl -fsS -o ai.json -w 'workers ai: HTTP %{http_code} in %{time_total} s\n' \
+            -H "Authorization: Bearer ${CF_AI_TOKEN}" -H "Content-Type: application/json" -d "$body" \
+            "https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai/run/@cf/qwen/qwen3-embedding-0.6b"
+          python3 -c 'import json,math; r=json.load(open("ai.json"))["result"]; v=r["data"][0]; print("dims", len(v), "norm", round(math.sqrt(sum(x*x for x in v)), 4), "usage", r["usage"])'
