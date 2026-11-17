@@ -1,0 +1,28 @@
+# Keeps scheduled workflows from being disabled after 60 days without
+# repository activity (Hiyabye/Rhythm#166 O17): re-enables them through the
+# API with this workflow's own token, so no commits are needed.
+name: Keep-alive
+
+on:
+  schedule:
+    - cron: "17 3 1 * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  enable:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Re-enable scheduled workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api "repos/$REPO/actions/workflows" --jq '.workflows[] | select(.path | startswith(".github/workflows/")) | "\(.id) \(.path) \(.state)"' |
+          while read -r id path state; do
+            gh api -X PUT "repos/$REPO/actions/workflows/$id/enable"
+            echo "enabled $path (was $state)"
+          done
