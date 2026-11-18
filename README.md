@@ -24,7 +24,7 @@ Secrets live in the `collector` environment (main only) and reach only the colle
 
 **Pause.** `gh workflow disable collect.yml -R rhythm-fetch/collector`, and `enable` to resume. A disabled workflow stays disabled until enabled again, or until the next keep-alive run re-enables it.
 
-**Rollback.** Only while no v2 client reads the feed (Hiyabye/Rhythm `docs/FEED.md`, "Restart"):
+**Rollback.** Returns the state to an older version and restarts the feed from it (Hiyabye/Rhythm `docs/FEED.md`, "Restart"); clients follow on their next sync:
 
 1. Pause the collector and wait for a running collect run to finish.
 2. Delete every state version newer than the one to return to, with the R2 collector credentials in `CF_ACCOUNT_ID`, `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`:
@@ -34,4 +34,4 @@ Secrets live in the `collector` environment (main only) and reach only the colle
    r2 "$base?list-type=2&prefix=state/" | grep -o '<Key>[^<]*</Key>'
    r2 -X DELETE "$base/state/<version>.sqlite3.zst"
    ```
-3. Enable the workflow again and run Collect with `reset_feed` checked. The feed starts again at seq 1 from the older state, and the next run deletes the old feed files. A scheduled run that starts first only refuses to publish, without uploading anything. If the reset run fails, run it with `reset_feed` again.
+3. Enable the workflow again and run Collect with `reset_feed` checked. The feed continues after the published seqs with only a snapshot of the older state, which every client applies on its next sync. The old feed files are deleted a day later. A scheduled run that starts first only refuses to publish, without uploading anything. If the reset run fails, run it with `reset_feed` again.
