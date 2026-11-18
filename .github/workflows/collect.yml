@@ -1,0 +1,104 @@
+# The production collector (Hiyabye/Rhythm#176): crawls every public board
+# into the R2 state, embeds through Workers AI and publishes the signed feed.
+# Operations (first run, upgrade, canary reset, rollback) are in README.md.
+name: Collect
+
+on:
+  schedule:
+    # Every 30 minutes (user decision, 2026-11-18), off the top of the hour,
+    # where GitHub drops the most scheduled runs.
+    - cron: "11,41 * * * *"
+  workflow_dispatch:
+    inputs:
+      init:
+        description: "First run only: start the history of the empty state/ prefix"
+        type: boolean
+        default: false
+      reset_canary:
+        description: "After a canary drift stop: record a new canary reference"
+        type: boolean
+        default: false
+      reset_feed:
+        description: "After a state rollback: publish the feed again from seq 1 (only while no v2 client reads it)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Runs never overlap and a running one is never cancelled: a cancelled run
+# would only waste its crawl, since state is uploaded at the end. The
+# collector itself also refuses to upload over a version newer than its own.
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+env:
+  # The Hiyabye/Rhythm main commit the collector is built from. Production
+  # changes only when this moves (user decision, 2026-11-18).
+  RHYTHM_REF: d9965936c83f89f30ce36db21ebcc0cf04a11b3d
+
+jobs:
+  collect:
+    runs-on: ubuntu-24.04
+    environment: collector
+    # A run killed here uploads nothing: the previous state stays newest.
+    timeout-minutes: 60
+    steps:
+      # One binary per pinned commit, so an unchanged pin skips the build.
+      - name: Restore the collector binary
+        id: binary
+        uses: actions/cache/restore@v4
+        with:
+          path: bin/rhythm-collector
+          key: rhythm-collector-${{ runner.os }}-${{ env.RHYTHM_REF }}
+
+      - name: Check out Rhythm at the pinned commit
+        if: steps.binary.outputs.cache-hit != 'true'
+        uses: actions/checkout@v5
+        with:
+          repository: Hiyabye/Rhythm
+          ref: ${{ env.RHYTHM_REF }}
+          path: rhythm
+          persist-credentials: false
+
+      - name: Install Rust
+        if: steps.binary.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      # No secrets in this step's environment: it runs third-party build scripts.
+      - name: Build the collector
+        if: steps.binary.outputs.cache-hit != 'true'
+        working-directory: rhythm
+        run: |
+          cargo build --locked --release -p rhythm-collector
+          mkdir -p ../bin
+          cp target/release/rhythm-collector ../bin/
+
+      # Saved right away, so a failed collect step does not rebuild next time.
+      - name: Save the collector binary
+        if: steps.binary.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: bin/rhythm-collector
+          key: ${{ steps.binary.outputs.cache-primary-key }}
+
+      - name: Collect, embed and publish
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_AI_TOKEN: ${{ secrets.CF_AI_TOKEN }}
+          RHYTHM_FEED_SIGNING_KEY: ${{ secrets.RHYTHM_FEED_SIGNING_KEY }}
+          INIT: ${{ inputs.init }}
+          RESET_CANARY: ${{ inputs.reset_canary }}
+          RESET_FEED: ${{ inputs.reset_feed }}
+        run: |
+          set -euo pipefail
+          # At most 150 articles per board pass (user decision, 2026-11-18):
+          # the full history arrives over many runs through its checkpoints.
+          args=("$RUNNER_TEMP/state.sqlite3" --r2 state/ --publish feed/ --embed --articles 150)
+          if [ "$INIT" = true ]; then args+=(--init); fi
+          if [ "$RESET_CANARY" = true ]; then args+=(--reset-canary); fi
+          if [ "$RESET_FEED" = true ]; then args+=(--reset-feed); fi
+          ./bin/rhythm-collector "${args[@]}"
