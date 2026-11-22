@@ -6,7 +6,7 @@ Scheduled collector for the [Rhythm](https://github.com/Hiyabye/Rhythm) v2 notic
 
 | Workflow | What it does |
 | --- | --- |
-| `collect.yml` | Every 30 minutes: crawls every public Sogang board into the state, embeds new notices through Workers AI and publishes the signed feed (`rhythm-collector --r2 state/ --publish feed/ --embed --articles 150`). |
+| `collect.yml` | Every 30 minutes: crawls every public Sogang board into the state, embeds new notices through Workers AI and publishes the signed feed (`rhythm-collector --r2 state/ --publish feed/ --embed --articles 150 --history-minutes 15`). |
 | `keepalive.yml` | Monthly: re-enables every workflow so GitHub's 60-day inactivity rule never stops the schedule. |
 | `drift-probe.yml` | Temporary schedule-drift measurement for Hiyabye/Rhythm#218. |
 
@@ -16,7 +16,7 @@ Secrets live in the `collector` environment (main only) and reach only the colle
 
 ## Operations
 
-**First run.** Actions → Collect → Run workflow with `init` checked. It refuses when a state version already exists. Each board pass handles at most 150 articles, so the full history (about 17,300 notices) and its embeddings (at most 1,000 per run) arrive over about a day of runs.
+**First run.** Actions → Collect → Run workflow with `init` checked. It refuses when a state version already exists. Each run fetches every board's new notices first, then spends the rest of its first 15 minutes on history, in turns of at most 150 articles per board, so the full history (about 17,300 notices) and its embeddings (at most 1,000 per run) arrive over about a day of runs.
 
 **Upgrade.** Production is built from the Rhythm commit in `RHYTHM_REF`. To upgrade, open a PR here that sets it to a newer `main` commit of Hiyabye/Rhythm. The first run after the merge builds and caches the binary (a few minutes).
 
