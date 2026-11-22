@@ -36,7 +36,7 @@ concurrency:
 env:
   # The Hiyabye/Rhythm main commit the collector is built from. Production
   # changes only when this moves (user decision, 2026-11-18).
-  RHYTHM_REF: 73332609615b0c965f6fcae4286efdc3468e9875
+  RHYTHM_REF: 7240ac2d86b947f6d047aa5e9ba28c71d97e2b24
 
 jobs:
   collect:
@@ -95,9 +95,11 @@ jobs:
           RESET_FEED: ${{ inputs.reset_feed }}
         run: |
           set -euo pipefail
-          # At most 150 articles per board pass (user decision, 2026-11-18):
-          # the full history arrives over many runs through its checkpoints.
-          args=("$RUNNER_TEMP/state.sqlite3" --r2 state/ --publish feed/ --embed --articles 150)
+          # New notices on every board first; then history in turns of at most
+          # 150 articles per board (user decision, 2026-11-18) until 15 minutes
+          # after the crawl started (Hiyabye/Rhythm#80, user decision
+          # 2026-11-22). The full history arrives over many runs.
+          args=("$RUNNER_TEMP/state.sqlite3" --r2 state/ --publish feed/ --embed --articles 150 --history-minutes 15)
           if [ "$INIT" = true ]; then args+=(--init); fi
           if [ "$RESET_CANARY" = true ]; then args+=(--reset-canary); fi
           if [ "$RESET_FEED" = true ]; then args+=(--reset-feed); fi
