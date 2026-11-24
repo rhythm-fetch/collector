@@ -6,7 +6,8 @@ name: Collect
 on:
   schedule:
     # Every 30 minutes (user decision, 2026-11-18), off the top of the hour,
-    # where GitHub drops the most scheduled runs.
+    # where GitHub drops the most scheduled runs. GitHub still fires only about
+    # one run an hour (Hiyabye/Rhythm#218); accepted 2026-11-24 (#176).
     - cron: "11,41 * * * *"
   workflow_dispatch:
     inputs:
