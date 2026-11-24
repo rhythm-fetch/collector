@@ -8,7 +8,6 @@ Scheduled collector for the [Rhythm](https://github.com/Hiyabye/Rhythm) v2 notic
 | --- | --- |
 | `collect.yml` | Every 30 minutes: crawls every public Sogang board into the state, embeds new notices through Workers AI and publishes the signed feed (`rhythm-collector --r2 state/ --publish feed/ --embed --articles 150 --history-minutes 15`). |
 | `keepalive.yml` | Monthly: re-enables every workflow so GitHub's 60-day inactivity rule never stops the schedule. |
-| `drift-probe.yml` | Temporary schedule-drift measurement for Hiyabye/Rhythm#218. |
 
 Each collect run downloads the newest state version from the private `rhythm-state` bucket (`state/<UTC time>.sqlite3.zst`, newest 48 kept), crawls, publishes the new feed files to `rhythm-feed` under `feed/`, uploads the state as a new version, and only then publishes the manifest. A run that fails or is killed before the upload changes nothing; files it uploaded are deleted by the next run. A failed board is listed in the run log and in the manifest's board health, and does not fail the run.
 
