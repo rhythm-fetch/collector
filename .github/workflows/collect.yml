@@ -37,7 +37,7 @@ concurrency:
 env:
   # The Hiyabye/Rhythm main commit the collector is built from. Production
   # changes only when this moves (user decision, 2026-11-18).
-  RHYTHM_REF: 41eeb6574ae58b0a3f628789fa1a400f049f0f1d
+  RHYTHM_REF: 36e8c2648b3e41ece4527119fc317b5cfc790c5d
 
 jobs:
   collect:
