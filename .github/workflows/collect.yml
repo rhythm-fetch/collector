@@ -37,7 +37,7 @@ concurrency:
 env:
   # The Hiyabye/Rhythm main commit the collector is built from. Production
   # changes only when this moves (user decision, 2026-11-18).
-  RHYTHM_REF: 87ee68eadc894057e6beddf880365bd64592ba6b
+  RHYTHM_REF: a6e05960e3d93c8ed831981b0d74bcf0e3725e32
 
 jobs:
   collect:
@@ -99,9 +99,69 @@ jobs:
           # New notices on every board first; then history in turns of at most
           # 150 articles per board (user decision, 2026-11-18) until 15 minutes
           # after the crawl started (Hiyabye/Rhythm#80, user decision
-          # 2026-11-22). The full history arrives over many runs.
-          args=("$RUNNER_TEMP/state.sqlite3" --r2 state/ --publish feed/ --embed --articles 150 --history-minutes 15)
+          # 2026-11-22). The full history arrives over many runs. Dormitory
+          # menu images that need OCR go to the meals folder (Hiyabye/Rhythm#318).
+          mkdir -p "$RUNNER_TEMP/meals"
+          args=("$RUNNER_TEMP/state.sqlite3" --r2 state/ --publish feed/ --embed --articles 150 --history-minutes 15 --meal-images "$RUNNER_TEMP/meals")
           if [ "$INIT" = true ]; then args+=(--init); fi
           if [ "$RESET_CANARY" = true ]; then args+=(--reset-canary); fi
           if [ "$RESET_FEED" = true ]; then args+=(--reset-feed); fi
           ./bin/rhythm-collector "${args[@]}"
+
+      # The dormitory menu (Hiyabye/Rhythm#318): the crawl above wrote each
+      # menu image that needs OCR with a `<sha>.json` job into the folder.
+      - name: Look for menu images
+        id: meals
+        run: |
+          if compgen -G "$RUNNER_TEMP/meals/*.json" > /dev/null; then
+            echo "jobs=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out the menu OCR step
+        if: steps.meals.outputs.jobs == 'true'
+        uses: actions/checkout@v5
+        with:
+          repository: Hiyabye/Rhythm
+          ref: ${{ env.RHYTHM_REF }}
+          path: rhythm-ocr
+          sparse-checkout: crates/collector/meal-ocr
+          persist-credentials: false
+
+      - name: Install Python
+        if: steps.meals.outputs.jobs == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: rhythm-ocr/crates/collector/meal-ocr/requirements.lock
+
+      # PaddleX downloads the two models on first use; the step checks every
+      # weight file against its reviewed SHA-256 before reading an image.
+      - name: Cache the OCR models
+        if: steps.meals.outputs.jobs == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/paddlex
+          key: paddlex-${{ runner.os }}-${{ hashFiles('rhythm-ocr/crates/collector/meal-ocr/meal_ocr.py') }}
+
+      # No secrets in this step's environment: it runs third-party code.
+      - name: Read the menu images
+        if: steps.meals.outputs.jobs == 'true'
+        env:
+          PADDLE_PDX_CACHE_HOME: ${{ runner.temp }}/paddlex
+        run: |
+          set -euo pipefail
+          pip install --require-hashes --no-deps -r rhythm-ocr/crates/collector/meal-ocr/requirements.lock
+          python rhythm-ocr/crates/collector/meal-ocr/meal_ocr.py "$RUNNER_TEMP/meals"
+
+      # Validates each result again, records the weeks in a new state version
+      # and publishes them. An image without a usable result stays pending and
+      # is offered again next run; a failure here leaves the crawl's upload.
+      - name: Publish the menu weeks
+        if: steps.meals.outputs.jobs == 'true'
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          RHYTHM_FEED_SIGNING_KEY: ${{ secrets.RHYTHM_FEED_SIGNING_KEY }}
+        run: ./bin/rhythm-collector "$RUNNER_TEMP/meals-state.sqlite3" --r2 state/ --publish feed/ --meal-results "$RUNNER_TEMP/meals"
